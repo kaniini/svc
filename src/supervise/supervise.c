@@ -1,0 +1,348 @@
+/*
+ * This file is a part of svc.
+ * svc-supervise -- supervise a child process and restart it if necessary.
+ *
+ * Copyright (c) 2017 William Pitcock <nenolod@dereferenced.org>.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * This software is provided 'as is' and without any warranty, express or
+ * implied.  In no event shall the authors be liable for any damages arising
+ * from the use of this software.
+ */
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <syslog.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
+#include <termios.h>
+#include <sys/time.h>
+#include <sys/wait.h>
+#include <sys/queue.h>
+#include <sys/epoll.h>
+#include <sys/signalfd.h>
+#include <assert.h>
+#include <getopt.h>
+#include <err.h>
+
+
+struct supervisor;
+
+
+struct childproc {
+	char *prog_name;
+	char **prog_argv;
+
+	char *dir_chroot;
+	char *dir_chdir;
+
+	int restart_count;
+
+	int respawn_delay;
+	int respawn_max;
+	int respawn_period;
+	time_t respawn_last;
+
+	pid_t child_pid;
+
+	uid_t child_uid;
+	gid_t child_gid;
+
+	int stdin_fd;
+	int stdout_fd;
+	int stderr_fd;
+
+	struct supervisor *parent;
+};
+
+static void childproc_start(struct childproc *proc);
+static void childproc_exec(struct childproc *proc);
+static bool childproc_monitor(struct childproc *proc);
+
+
+struct supervisor {
+	struct childproc proc;
+
+	bool exiting;
+
+	int manager_fd;
+	int signal_fd;
+};
+
+
+/*
+ * Fork a child process to execute the service in, via childproc_exec().
+ */
+static void
+childproc_start(struct childproc *proc)
+{
+	assert(proc != NULL);
+
+	proc->child_pid = fork();
+	if (proc->child_pid == 0)
+	{
+		childproc_exec(proc);
+		exit(EXIT_FAILURE);
+	}
+
+	proc->respawn_last = time(NULL);
+}
+
+
+/*
+ * Execute a child process.
+ */
+static void
+childproc_exec(struct childproc *proc)
+{
+	assert(proc != NULL);
+
+	setsid();
+
+	/* indicate to the system operator that the process is alive */
+	syslog(LOG_INFO, "%s: starting, pid %d", proc->prog_name, getpid());
+
+	if (proc->dir_chroot != NULL && chroot(proc->dir_chroot) < 0)
+	{
+		syslog(LOG_INFO, "%s: failed to chroot to '%s': %s", proc->prog_name, proc->dir_chroot, strerror(errno));
+		return;
+	}
+
+	if (proc->dir_chdir != NULL && chdir(proc->dir_chdir) < 0)
+	{
+		syslog(LOG_INFO, "%s: failed to chdir to '%s': %s", proc->prog_name, proc->dir_chdir, strerror(errno));
+		return;
+	}
+
+#ifdef NOTYET
+	if (proc->child_gid && setgid(proc->child_gid))
+	{
+		syslog(LOG_INFO, "%s: failed to setgid to %d: %s", proc->prog_name, proc->child_gid, strerror(errno));
+		return;
+	}
+
+	if (proc->child_uid && setgid(proc->child_uid))
+	{
+		syslog(LOG_INFO, "%s: failed to setuid to %d: %s", proc->prog_name, proc->child_uid, strerror(errno));
+		return;
+	}
+#endif
+
+	dup2(proc->stdin_fd, STDIN_FILENO);
+	dup2(proc->stdout_fd, STDOUT_FILENO);
+	dup2(proc->stderr_fd, STDERR_FILENO);
+
+	for (int i = getdtablesize() - 1; i > STDERR_FILENO; i--)
+		fcntl(i, F_SETFD, FD_CLOEXEC);
+
+	execvp(proc->prog_name, proc->prog_argv);
+	syslog(LOG_INFO, "%s: failed to exec %s: %s", proc->prog_name, proc->prog_name, strerror(errno));
+}
+
+
+/*
+ * Monitor a child process using wait(2).
+ * Returns true if process needs to be restarted, else false.
+ */
+static bool
+childproc_monitor(struct childproc *proc)
+{
+	int i;
+
+	assert(proc != NULL);
+	assert(proc->child_pid != 0);
+
+	while (!proc->parent->exiting)
+	{
+		wait(&i);
+
+		if (proc->parent->exiting)
+		{
+			signal(SIGCHLD, SIG_IGN);
+			syslog(LOG_INFO, "%s: stopping, pid %d", proc->prog_name, proc->child_pid);
+			if (proc->child_pid)
+				kill(proc->child_pid, SIGTERM);
+		}
+		else
+		{
+			time_t current_ts = time(NULL);
+
+			proc->restart_count++;
+			sleep(proc->respawn_delay);
+
+			if (proc->respawn_period && current_ts - proc->respawn_last > proc->respawn_period)
+				proc->restart_count = 0;
+
+			if (proc->respawn_max > 0 && proc->restart_count > proc->respawn_max)
+			{
+				syslog(LOG_INFO, "%s: restarted too many times, giving up", proc->prog_name);
+				return false;
+			}
+
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+/*
+ * Main supervision loop.
+ */
+static void
+supervisor_run(struct supervisor *sup)
+{
+	assert(sup != NULL);
+
+	childproc_start(&sup->proc);
+
+	while (!sup->exiting)
+	{
+		bool should_restart = childproc_monitor(&sup->proc);
+		if (sup->exiting || !should_restart)
+			return;
+
+		childproc_start(&sup->proc);
+	}
+}
+
+
+static void
+usage(void)
+{
+	printf("usage: svc-supervise [options] -- [program] [arguments]\n\nOptions:\n\n");
+
+	printf("    --help                        this message\n");
+	printf("    --stdout=PATH                 redirect program stdout to PATH\n");
+	printf("    --stderr=PATH                 redirect program stderr to PATH\n");
+	printf("    --chdir=PATH                  change directory to PATH\n");
+	printf("    --chroot=PATH                 change root directory to PATH\n");
+	printf("    --respawn-delay=SECONDS       wait SECONDS before respawning\n");
+	printf("    --respawn-max=NUMBER          give up respawning after NUMBER times\n");
+	printf("    --manager-fd=NUMBER           perform manager-supervisor IPC on the given\n");
+	printf("                                  descriptor number\n");
+
+	exit(EXIT_SUCCESS);
+}
+
+
+const char *shortopts = "D:m:d:r:e:1:2:h";
+const struct option longopts[] = {
+	{"respawn-delay",	1, NULL, 'D'},
+	{"respawn-max",		1, NULL, 'm'},
+	{"chdir",		1, NULL, 'd'},
+	{"chroot",		1, NULL, 'r'},
+#ifdef NOTYET
+	{"env",			1, NULL, 'e'},
+#endif
+	{"stdout",		1, NULL, '1'},
+	{"stderr",		1, NULL, '2'},
+	{"help",		0, NULL, 'h'},
+	{"manager-fd",		1, NULL, 128},
+	{NULL,			0, NULL, 0  },
+};
+
+
+static void
+redirect_descriptor(int *des, const char *path)
+{
+	int fileno;
+
+	assert(des != NULL);
+	assert(path != NULL);
+
+	fileno = open(path, O_RDWR);
+	if (fileno < 0)
+		err(1, "redirection of %s", path);
+
+	*des = fileno;
+}
+
+
+/*
+ * Set up the supervisor object and begin supervision.
+ */
+int
+main(int argc, char *argv[])
+{
+	int ret;
+	struct supervisor sup;
+
+	sup.proc.parent = &sup;
+	sup.exiting = false;
+
+	if (argc < 2)
+		usage();
+
+	/* set up the supervisor object */
+	while ((ret = getopt_long(argc, argv, shortopts, longopts, NULL)) != -1)
+	{
+		switch (ret)
+		{
+			case 'h':
+				usage();
+				break;
+
+			case '1':
+				redirect_descriptor(&sup.proc.stdout_fd, optarg);
+				break;
+
+			case '2':
+				redirect_descriptor(&sup.proc.stderr_fd, optarg);
+				break;
+
+			case 'd':
+				sup.proc.dir_chdir = optarg;
+				break;
+
+			case 'r':
+				sup.proc.dir_chroot = optarg;
+				break;
+
+			case 'D':
+				sup.proc.respawn_delay = atoi(optarg);
+				break;
+
+			case 'm':
+				sup.proc.respawn_max = atoi(optarg);
+				break;
+
+			case 128:
+				sup.manager_fd = atoi(optarg);
+				break;
+
+			default:
+				fprintf(stderr, "unhandled argument: %d\n", ret);
+				break;
+		}
+	}
+
+	argc -= optind;
+	argv += optind;
+
+	if (argc == 0)
+		usage();
+
+	sup.proc.prog_name = argv[0];
+	sup.proc.prog_argv = argv;
+
+	/* TODO: add optional detach */
+
+	supervisor_run(&sup);
+
+	return EXIT_SUCCESS;
+}
