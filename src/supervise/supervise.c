@@ -32,7 +32,7 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <sys/queue.h>
-#include <sys/epoll.h>
+#include <poll.h>
 #include <sys/signalfd.h>
 #include <assert.h>
 #include <getopt.h>
@@ -80,7 +80,34 @@ struct supervisor {
 
 	int manager_fd;
 	int signal_fd;
+	int watch_fds;
 };
+
+
+static void
+signal_block(void)
+{
+	sigset_t mask;
+
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGCHLD);
+	sigaddset(&mask, SIGTERM);
+
+	if (sigprocmask(SIG_SETMASK, &mask, NULL) == -1)
+		abort();
+}
+
+
+static void
+signal_unblock(void)
+{
+	sigset_t mask;
+
+	sigemptyset(&mask);
+
+	if (sigprocmask(SIG_SETMASK, &mask, NULL) == -1)
+		abort();
+}
 
 
 /*
@@ -109,6 +136,8 @@ static void
 childproc_exec(struct childproc *proc)
 {
 	assert(proc != NULL);
+
+	signal_unblock();
 
 	setsid();
 
@@ -165,38 +194,53 @@ childproc_monitor(struct childproc *proc)
 	assert(proc != NULL);
 	assert(proc->child_pid != 0);
 
-	while (!proc->parent->exiting)
+	wait(&i);
+
+	if (proc->parent->exiting)
 	{
-		wait(&i);
+		signal(SIGCHLD, SIG_IGN);
+		syslog(LOG_INFO, "%s: stopping, pid %d", proc->prog_name, proc->child_pid);
+		if (proc->child_pid)
+			kill(proc->child_pid, SIGTERM);
+	}
+	else
+	{
+		time_t current_ts = time(NULL);
 
-		if (proc->parent->exiting)
+		proc->restart_count++;
+		if (proc->respawn_period && current_ts - proc->respawn_last > proc->respawn_period)
+			proc->restart_count = 0;
+
+		if (proc->respawn_max > 0 && proc->restart_count > proc->respawn_max)
 		{
-			signal(SIGCHLD, SIG_IGN);
-			syslog(LOG_INFO, "%s: stopping, pid %d", proc->prog_name, proc->child_pid);
-			if (proc->child_pid)
-				kill(proc->child_pid, SIGTERM);
+			syslog(LOG_INFO, "%s: restarted too many times, giving up", proc->prog_name);
+			return false;
 		}
-		else
-		{
-			time_t current_ts = time(NULL);
 
-			proc->restart_count++;
-			sleep(proc->respawn_delay);
-
-			if (proc->respawn_period && current_ts - proc->respawn_last > proc->respawn_period)
-				proc->restart_count = 0;
-
-			if (proc->respawn_max > 0 && proc->restart_count > proc->respawn_max)
-			{
-				syslog(LOG_INFO, "%s: restarted too many times, giving up", proc->prog_name);
-				return false;
-			}
-
-			return true;
-		}
+		return true;
 	}
 
 	return false;
+}
+
+
+/*
+ * Prepare to run the supervisor.
+ */
+static void
+supervisor_prepare(struct supervisor *sup)
+{
+	sigset_t sigs;
+
+	assert(sup != NULL);
+
+	signal_block();
+
+	sigemptyset(&sigs);
+	sigaddset(&sigs, SIGCHLD);
+	sigaddset(&sigs, SIGTERM);
+
+	sup->signal_fd = signalfd(-1, &sigs, SFD_CLOEXEC);
 }
 
 
@@ -206,17 +250,57 @@ childproc_monitor(struct childproc *proc)
 static void
 supervisor_run(struct supervisor *sup)
 {
+	bool pending_restart = false;
+
 	assert(sup != NULL);
 
 	childproc_start(&sup->proc);
 
 	while (!sup->exiting)
 	{
-		bool should_restart = childproc_monitor(&sup->proc);
-		if (sup->exiting || !should_restart)
-			return;
+		struct pollfd pfds[2] = {
+			[0] = {.fd = sup->signal_fd, .events = POLLIN},
+			[1] = {.fd = sup->manager_fd, .events = POLLIN}
+		};
 
-		childproc_start(&sup->proc);
+		if (poll(pfds, sup->watch_fds, !pending_restart ? -1 : (sup->proc.respawn_delay * 1000)) < 0)
+			abort();
+
+		if (pfds[0].revents & POLLIN)
+		{
+			struct signalfd_siginfo si;
+			bool should_restart;
+
+			if (read(sup->signal_fd, &si, sizeof si) < sizeof si)
+				abort();
+
+			if (si.ssi_signo != SIGCHLD)
+				continue;
+
+			should_restart = childproc_monitor(&sup->proc);
+
+			/* shouldn't restart; request that the supervisor shut down */
+			if (!should_restart)
+			{
+				sup->exiting = true;
+				continue;
+			}
+
+			/* go back into event loop for the respawn delay, or start the process now if there is none */
+			if (sup->proc.respawn_delay)
+				pending_restart = true;
+			else
+				childproc_start(&sup->proc);
+
+			continue;
+		}
+
+		/* if a restart was enqueued, handle it now */
+		if (pending_restart)
+		{
+			childproc_start(&sup->proc);
+			pending_restart = false;
+		}
 	}
 }
 
@@ -265,7 +349,7 @@ redirect_descriptor(int *des, const char *path)
 	assert(des != NULL);
 	assert(path != NULL);
 
-	fileno = open(path, O_RDWR);
+	fileno = open(path, O_CREAT | O_APPEND | O_RDWR);
 	if (fileno < 0)
 		err(1, "redirection of %s", path);
 
@@ -284,6 +368,8 @@ main(int argc, char *argv[])
 
 	sup.proc.parent = &sup;
 	sup.exiting = false;
+	sup.manager_fd = -1;
+	sup.watch_fds = 1;
 
 	if (argc < 2)
 		usage();
@@ -323,6 +409,7 @@ main(int argc, char *argv[])
 
 			case 128:
 				sup.manager_fd = atoi(optarg);
+				sup.watch_fds++;
 				break;
 
 			default:
@@ -341,7 +428,7 @@ main(int argc, char *argv[])
 	sup.proc.prog_argv = argv;
 
 	/* TODO: add optional detach */
-
+	supervisor_prepare(&sup);
 	supervisor_run(&sup);
 
 	return EXIT_SUCCESS;
