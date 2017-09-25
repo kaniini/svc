@@ -35,7 +35,8 @@ process may be managed by a parent `svc-manager` process.
 
 ## `svc-init`
 
-The `svc-init` process brings up the system and starts the first `svc-manager` process.
+The `svc-init` process brings up the system and starts the first `svc-manager` process.  It listens on the `/dev/initctl` fifo and
+does not participate in the `libnv`-based IPC.  The first `svc-manager` process listens at `/run/.svc-sock` for IPC requests.
 
 
 ## design goals
