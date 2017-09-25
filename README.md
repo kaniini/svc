@@ -33,7 +33,7 @@ The `svc-manager` service manager manages process supervisors and handles depend
 process may be managed by a parent `svc-manager` process.
 
 
-# `svc-init`
+## `svc-init`
 
 The `svc-init` process brings up the system and starts the first `svc-manager` process.
 
