@@ -21,6 +21,10 @@ AC_TYPE_UINT16_T
 AC_TYPE_UINT64_T
 AC_TYPE_UINT8_T
 
+PKG_CHECK_MODULES(LIBNV, [libnv], [], [
+	AC_ERROR([libnv required to compile])
+])
+
 AC_FUNC_STRNLEN
 AC_CHECK_FUNCS([bzero select strcasecmp])
 AC_CONFIG_FILES([Makefile])
