@@ -39,6 +39,9 @@
 #include <err.h>
 
 
+#include "libsvc/ipc.h"
+
+
 struct supervisor;
 
 
@@ -225,6 +228,30 @@ childproc_monitor(struct childproc *proc)
 
 
 /*
+ * Process a supervisor IPC.
+ */
+static void
+supervisor_ipc(struct supervisor *sup)
+{
+	nvlist_t *nvl;
+
+	nvl = nvlist_recv(sup->manager_fd, 0);
+	if (nvl == NULL)
+	{
+		fprintf(stderr, "IPC ERROR: %s\n", strerror(errno));
+		sup->watch_fds--;
+		return;
+	}
+
+	printf("--- IPC received ---\n");
+	nvlist_fdump(nvl, stdout);
+	printf("------\n");
+
+	nvlist_destroy(nvl);
+}
+
+
+/*
  * Prepare to run the supervisor.
  */
 static void
@@ -265,6 +292,9 @@ supervisor_run(struct supervisor *sup)
 
 		if (poll(pfds, sup->watch_fds, !pending_restart ? -1 : (sup->proc.respawn_delay * 1000)) < 0)
 			abort();
+
+		if (pfds[1].revents & POLLIN)
+			supervisor_ipc(sup);
 
 		if (pfds[0].revents & POLLIN)
 		{
