@@ -50,7 +50,7 @@ ipc_obj_dispatch_method_cmp(const char *key, const void *tentry)
 
 
 ipc_obj_return_code_t
-ipc_obj_dispatch(int sock, const nvlist_t *nvl, const ipc_hdl_dispatch_t dispatch_table[], size_t dispatch_table_size)
+ipc_obj_dispatch(int sock, const nvlist_t *nvl, const ipc_hdl_dispatch_t dispatch_table[], size_t dispatch_table_size, void *opaque)
 {
 	const char *method;
 	const ipc_hdl_dispatch_t *pair;
@@ -69,5 +69,5 @@ ipc_obj_dispatch(int sock, const nvlist_t *nvl, const ipc_hdl_dispatch_t dispatc
 	if (pair == NULL || pair->dispatch_fn == NULL)
 		return IPC_OBJ_METHOD_NOT_FOUND;
 
-	return pair->dispatch_fn(sock, nvl);
+	return pair->dispatch_fn(sock, nvl, opaque);
 }
