@@ -27,4 +27,6 @@ bool ipc_obj_validate(const nvlist_t *nvl);
 void ipc_obj_prepare(nvlist_t *nvl, const char *method, uint64_t id, bool reply);
 ipc_obj_return_code_t ipc_obj_dispatch(int sock, const nvlist_t *nvl, const ipc_hdl_dispatch_t dispatch_table[], size_t dispatch_table_size, void *opaque);
 
+void ipc_obj_error(int sock, const nvlist_t *parent, ipc_obj_return_code_t rc);
+
 #endif

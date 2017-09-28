@@ -71,3 +71,14 @@ ipc_obj_dispatch(int sock, const nvlist_t *nvl, const ipc_hdl_dispatch_t dispatc
 
 	return pair->dispatch_fn(sock, nvl, opaque);
 }
+
+
+void
+ipc_obj_error(int sock, const nvlist_t *parent, ipc_obj_return_code_t rc)
+{
+	nvlist_t *nvl = nvlist_clone(parent);
+
+	nvlist_add_number(nvl, "ipc:error_code", rc);
+	nvlist_send(sock, nvl);
+	nvlist_destroy(nvl);
+}
