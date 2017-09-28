@@ -364,7 +364,7 @@ int
 main(int argc, char *argv[])
 {
 	int ret;
-	struct supervisor sup;
+	struct supervisor sup = {};
 
 	sup.proc.parent = &sup;
 	sup.exiting = false;
