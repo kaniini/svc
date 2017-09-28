@@ -228,24 +228,67 @@ childproc_monitor(struct childproc *proc)
 
 
 /*
+ * Process a supervisor IPC status command.
+ */
+static void
+supervisor_ipc_status(int manager_fd, const nvlist_t *nvl, struct supervisor *sup)
+{
+	nvlist_t *obj;
+
+	obj = nvlist_create(0);
+	ipc_obj_prepare(obj, "status", 0, true);
+
+	nvlist_add_string(obj, "prog_name", sup->proc.prog_name);
+
+	if (sup->proc.dir_chroot)
+		nvlist_add_string(obj, "dir_chroot", sup->proc.dir_chroot);
+
+	if (sup->proc.dir_chdir)
+		nvlist_add_string(obj, "dir_chdir", sup->proc.dir_chdir);
+
+	nvlist_add_number(obj, "pid", sup->proc.child_pid);
+
+	nvlist_add_number(obj, "uid", sup->proc.child_uid);
+	nvlist_add_number(obj, "gid", sup->proc.child_gid);
+
+	nvlist_add_number(obj, "restart_count", sup->proc.restart_count);
+
+	nvlist_add_number(obj, "respawn_delay", sup->proc.respawn_delay);
+	nvlist_add_number(obj, "respawn_max", sup->proc.respawn_max);
+	nvlist_add_number(obj, "respawn_period", sup->proc.respawn_period);
+	nvlist_add_number(obj, "respawn_last", sup->proc.respawn_last);
+
+	nvlist_send(manager_fd, obj);
+	nvlist_destroy(obj);
+}
+
+
+/* table must be alphabetically sorted! */
+static const ipc_hdl_dispatch_t supervisor_dispatch_table[] = {
+	{"status", (ipc_hdl_dispatch_fn_t) supervisor_ipc_status},
+};
+
+
+/*
  * Process a supervisor IPC.
  */
 static void
 supervisor_ipc(struct supervisor *sup)
 {
 	nvlist_t *nvl;
+	ipc_obj_return_code_t rc;
 
 	nvl = nvlist_recv(sup->manager_fd, 0);
 	if (nvl == NULL)
 	{
-		fprintf(stderr, "IPC ERROR: %s\n", strerror(errno));
+		/* XXX: IPC failure occured, maybe handle more gracefully */
 		sup->watch_fds--;
 		return;
 	}
 
-	printf("--- IPC received ---\n");
-	nvlist_fdump(nvl, stdout);
-	printf("------\n");
+	rc = ipc_obj_dispatch(sup->manager_fd, nvl, supervisor_dispatch_table, ARRAY_SIZE(supervisor_dispatch_table), sup);
+	if (rc != IPC_OBJ_OK)
+		ipc_obj_error(sup->manager_fd, nvl, rc);
 
 	nvlist_destroy(nvl);
 }
