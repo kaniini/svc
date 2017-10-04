@@ -266,6 +266,50 @@ childproc_monitor(struct childproc *proc)
 
 
 /*
+ * Process a supervisor IPC kill command.
+ */
+static void
+supervisor_ipc_kill(int manager_fd, const nvlist_t *nvl, struct supervisor *sup)
+{
+	nvlist_t *obj;
+
+	obj = nvlist_create(0);
+	ipc_obj_prepare(obj, "kill", 0, true);
+
+	childproc_kill(&sup->proc, true);
+
+	nvlist_add_bool(obj, "success", true);
+
+	nvlist_send(manager_fd, obj);
+	nvlist_destroy(obj);
+}
+
+
+/*
+ * Process a supervisor IPC restart command.
+ */
+static void
+supervisor_ipc_restart(int manager_fd, const nvlist_t *nvl, struct supervisor *sup)
+{
+	nvlist_t *obj;
+
+	obj = nvlist_create(0);
+	ipc_obj_prepare(obj, "kill", 0, true);
+
+	sup->proc.restart_count = 0;
+
+	childproc_kill(&sup->proc, true);
+	childproc_start(&sup->proc);
+
+	nvlist_add_bool(obj, "success", true);
+	nvlist_add_number(obj, "pid", sup->proc.child_pid);
+
+	nvlist_send(manager_fd, obj);
+	nvlist_destroy(obj);
+}
+
+
+/*
  * Process a supervisor IPC status command.
  */
 static void
@@ -303,6 +347,8 @@ supervisor_ipc_status(int manager_fd, const nvlist_t *nvl, struct supervisor *su
 
 /* table must be alphabetically sorted! */
 static const ipc_hdl_dispatch_t supervisor_dispatch_table[] = {
+	{"kill", (ipc_hdl_dispatch_fn_t) supervisor_ipc_kill},
+	{"restart", (ipc_hdl_dispatch_fn_t) supervisor_ipc_restart},
 	{"status", (ipc_hdl_dispatch_fn_t) supervisor_ipc_status},
 };
 
