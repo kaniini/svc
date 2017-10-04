@@ -294,7 +294,7 @@ supervisor_ipc_restart(int manager_fd, const nvlist_t *nvl, struct supervisor *s
 	nvlist_t *obj;
 
 	obj = nvlist_create(0);
-	ipc_obj_prepare(obj, "kill", 0, true);
+	ipc_obj_prepare(obj, "restart", 0, true);
 
 	sup->proc.restart_count = 0;
 
