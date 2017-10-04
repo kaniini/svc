@@ -431,7 +431,7 @@ sighdl_term(struct supervisor *sup)
 }
 
 
-static sighdl_fn_t sighdl_fns[SVC_SIGMAX] = {
+static const sighdl_fn_t sighdl_fns[SVC_SIGMAX] = {
 	[SIGCHLD] = sighdl_chld,
 	[SIGTERM] = sighdl_term,
 	[SIGQUIT] = sighdl_term
