@@ -59,6 +59,8 @@ struct childproc {
 	int respawn_period;
 	time_t respawn_last;
 
+	int kill_delay;
+
 	pid_t child_pid;
 
 	uid_t child_uid;
@@ -201,16 +203,23 @@ childproc_kill(struct childproc *proc, bool should_wait)
 	if (!should_wait)
 		return true;
 
-	waitpid(-1, &i, WNOHANG);
+	waitpid(proc->child_pid, &i, WNOHANG);
 
-	if (WIFEXITED(i))
+	if (WIFEXITED(i) || WIFSIGNALED(i))
+		return true;
+
+	sleep(proc->kill_delay);
+
+	waitpid(proc->child_pid, &i, WNOHANG);
+
+	if (WIFEXITED(i) || WIFSIGNALED(i))
 		return true;
 
 	kill(proc->child_pid, SIGKILL);
 
-	waitpid(-1, &i, 0);
+	waitpid(proc->child_pid, &i, 0);
 
-	return WIFEXITED(i) != 0;
+	return WIFEXITED(i) != 0 || WIFSIGNALED(i) != 0;
 }
 
 
@@ -226,7 +235,7 @@ childproc_monitor(struct childproc *proc)
 	assert(proc != NULL);
 	assert(proc->child_pid != 0);
 
-	wait(&i);
+	waitpid(proc->child_pid, &i, 0);
 
 	if (proc->parent->exiting)
 	{
@@ -529,6 +538,7 @@ main(int argc, char *argv[])
 
 	sup.proc.prog_name = argv[0];
 	sup.proc.prog_argv = argv;
+	sup.proc.kill_delay = 3;
 
 	/* TODO: add optional detach */
 	supervisor_prepare(&sup);
