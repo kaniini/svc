@@ -40,6 +40,7 @@
 
 
 #include "libsvc/ipc.h"
+#include "libsvc/uidgid.h"
 
 
 struct supervisor;
@@ -161,19 +162,17 @@ childproc_exec(struct childproc *proc)
 		return;
 	}
 
-#ifdef NOTYET
-	if (proc->child_gid && setgid(proc->child_gid))
+	if (proc->child_gid > -1 && setgid(proc->child_gid))
 	{
 		syslog(LOG_INFO, "%s: failed to setgid to %d: %s", proc->prog_name, proc->child_gid, strerror(errno));
 		return;
 	}
 
-	if (proc->child_uid && setgid(proc->child_uid))
+	if (proc->child_uid > -1 && setgid(proc->child_uid))
 	{
 		syslog(LOG_INFO, "%s: failed to setuid to %d: %s", proc->prog_name, proc->child_uid, strerror(errno));
 		return;
 	}
-#endif
 
 	dup2(proc->stdin_fd, STDIN_FILENO);
 	dup2(proc->stdout_fd, STDOUT_FILENO);
@@ -436,7 +435,7 @@ usage(void)
 }
 
 
-const char *shortopts = "D:m:d:r:e:1:2:h";
+const char *shortopts = "D:m:d:r:e:1:2:u:g:h";
 const struct option longopts[] = {
 	{"respawn-delay",	1, NULL, 'D'},
 	{"respawn-max",		1, NULL, 'm'},
@@ -447,6 +446,8 @@ const struct option longopts[] = {
 #endif
 	{"stdout",		1, NULL, '1'},
 	{"stderr",		1, NULL, '2'},
+	{"uid",			1, NULL, 'u'},
+	{"gid",			1, NULL, 'g'},
 	{"help",		0, NULL, 'h'},
 	{"manager-fd",		1, NULL, 128},
 	{NULL,			0, NULL, 0  },
@@ -483,6 +484,9 @@ main(int argc, char *argv[])
 	sup.manager_fd = -1;
 	sup.watch_fds = 1;
 
+	sup.proc.child_uid = -1;
+	sup.proc.child_gid = -1;
+
 	if (argc < 2)
 		usage();
 
@@ -517,6 +521,26 @@ main(int argc, char *argv[])
 
 			case 'm':
 				sup.proc.respawn_max = atoi(optarg);
+				break;
+
+			case 'u':
+				sup.proc.child_uid = uid_resolve(optarg);
+				if (sup.proc.child_uid == -1)
+				{
+					fprintf(stderr, "%s: could not resolve user: %s, aborting\n", argv[0], optarg);
+					return EXIT_FAILURE;
+				}
+
+				break;
+
+			case 'g':
+				sup.proc.child_gid = gid_resolve(optarg);
+				if (sup.proc.child_gid == -1)
+				{
+					fprintf(stderr, "%s: could not resolve group: %s, aborting\n", argv[0], optarg);
+					return EXIT_FAILURE;
+				}
+
 				break;
 
 			case 128:

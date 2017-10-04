@@ -1,9 +1,11 @@
 lib_LTLIBRARIES = libsvc.la
 
 
-libsvc_la_CPPFLAGS = -Isrc $(LIBNV_CFLAGS)
+LIBS += $(LIBNV_LIBS)
+CPPFLAGS = -Isrc $(LIBNV_CFLAGS)
 libsvc_la_SOURCES = 			\
-	src/libsvc/ipc.c
+	src/libsvc/ipc.c		\
+	src/libsvc/uidgid.c
 
 
 sbin_PROGRAMS = svc-supervise
