@@ -186,6 +186,35 @@ childproc_exec(struct childproc *proc)
 
 
 /*
+ * Kill a process.
+ */
+static bool
+childproc_kill(struct childproc *proc, bool should_wait)
+{
+	int i;
+
+	assert(proc != NULL);
+	assert(proc->child_pid != 0);
+
+	kill(proc->child_pid, SIGTERM);
+
+	if (!should_wait)
+		return true;
+
+	waitpid(-1, &i, WNOHANG);
+
+	if (WIFEXITED(i))
+		return true;
+
+	kill(proc->child_pid, SIGKILL);
+
+	waitpid(-1, &i, 0);
+
+	return WIFEXITED(i) != 0;
+}
+
+
+/*
  * Monitor a child process using wait(2).
  * Returns true if process needs to be restarted, else false.
  */
@@ -203,8 +232,9 @@ childproc_monitor(struct childproc *proc)
 	{
 		signal(SIGCHLD, SIG_IGN);
 		syslog(LOG_INFO, "%s: stopping, pid %d", proc->prog_name, proc->child_pid);
+
 		if (proc->child_pid)
-			kill(proc->child_pid, SIGTERM);
+			childproc_kill(proc, true);
 	}
 	else
 	{
