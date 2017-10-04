@@ -393,9 +393,49 @@ supervisor_prepare(struct supervisor *sup)
 	sigemptyset(&sigs);
 	sigaddset(&sigs, SIGCHLD);
 	sigaddset(&sigs, SIGTERM);
+	sigaddset(&sigs, SIGQUIT);
 
 	sup->signal_fd = signalfd(-1, &sigs, SFD_CLOEXEC);
 }
+
+
+#define SVC_SIGMAX (8 * sizeof(sigset_t) + 1)
+typedef bool (*sighdl_fn_t)(struct supervisor *sup);
+
+
+static bool
+sighdl_chld(struct supervisor *sup)
+{
+	bool should_restart = childproc_monitor(&sup->proc);
+
+	if (!should_restart)
+	{
+		sup->exiting = true;
+		return true;
+	}
+
+	if (sup->proc.respawn_delay)
+		return true;
+
+	childproc_start(&sup->proc);
+	return false;
+}
+
+
+static bool
+sighdl_term(struct supervisor *sup)
+{
+	sup->exiting = true;
+	childproc_kill(&sup->proc, true);
+	return true;
+}
+
+
+static sighdl_fn_t sighdl_fns[SVC_SIGMAX] = {
+	[SIGCHLD] = sighdl_chld,
+	[SIGTERM] = sighdl_term,
+	[SIGQUIT] = sighdl_term
+};
 
 
 /*
@@ -426,7 +466,6 @@ supervisor_run(struct supervisor *sup)
 		if (pfds[0].revents & POLLIN)
 		{
 			struct signalfd_siginfo si;
-			bool should_restart;
 
 			if (read(sup->signal_fd, &si, sizeof si) < sizeof si)
 				abort();
@@ -434,22 +473,12 @@ supervisor_run(struct supervisor *sup)
 			if (si.ssi_signo != SIGCHLD)
 				continue;
 
-			should_restart = childproc_monitor(&sup->proc);
-
-			/* shouldn't restart; request that the supervisor shut down */
-			if (!should_restart)
+			if (sighdl_fns[si.ssi_signo] != NULL)
 			{
-				sup->exiting = true;
-				continue;
+				pending_restart = sighdl_fns[si.ssi_signo](sup);
+				if (pending_restart)
+					continue;
 			}
-
-			/* go back into event loop for the respawn delay, or start the process now if there is none */
-			if (sup->proc.respawn_delay)
-				pending_restart = true;
-			else
-				childproc_start(&sup->proc);
-
-			continue;
 		}
 
 		/* if a restart was enqueued, handle it now */
