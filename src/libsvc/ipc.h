@@ -18,7 +18,7 @@ typedef enum ipc_obj_return_code_e {
 typedef ipc_obj_return_code_t (*ipc_hdl_dispatch_fn_t)(int sock, const nvlist_t *nvl, void *opaque);
 typedef struct ipc_hdl_dispatch_s {
 	const char *method;
-	ipc_hdl_dispatch_fn_t dispatch_fn;
+	const ipc_hdl_dispatch_fn_t dispatch_fn;
 } ipc_hdl_dispatch_t;
 
 bool ipc_obj_is_reply(const nvlist_t *nvl);
