@@ -46,6 +46,17 @@
 struct supervisor;
 
 
+typedef enum childproc_state_e {
+	CHILDPROC_INITIAL,
+	CHILDPROC_STARTING,
+	CHILDPROC_UP,
+	CHILDPROC_READY,
+	CHILDPROC_CRASHED,
+	CHILDPROC_STOPPING,
+	CHILDPROC_DOWN
+} childproc_state_t;
+
+
 struct childproc {
 	char *prog_name;
 	char **prog_argv;
@@ -71,7 +82,7 @@ struct childproc {
 	int stdout_fd;
 	int stderr_fd;
 
-	struct supervisor *parent;
+	childproc_state_t state;
 };
 
 static void childproc_start(struct childproc *proc);
@@ -119,12 +130,24 @@ signal_unblock(void)
 
 
 /*
+ * Set childproc state.
+ */
+static void
+childproc_setstate(struct childproc *proc, childproc_state_t state)
+{
+	proc->state = state;
+}
+
+
+/*
  * Fork a child process to execute the service in, via childproc_exec().
  */
 static void
 childproc_start(struct childproc *proc)
 {
 	assert(proc != NULL);
+
+	childproc_setstate(proc, CHILDPROC_STARTING);
 
 	proc->child_pid = fork();
 	if (proc->child_pid == 0)
@@ -238,17 +261,22 @@ childproc_monitor(struct childproc *proc)
 
 	waitpid(proc->child_pid, &i, 0);
 
-	if (proc->parent->exiting)
+	if (proc->state == CHILDPROC_STOPPING || proc->state == CHILDPROC_DOWN)
 	{
 		signal(SIGCHLD, SIG_IGN);
-		syslog(LOG_INFO, "%s: stopping, pid %d", proc->prog_name, proc->child_pid);
+		syslog(LOG_INFO, "%s: stop%s, pid %d", proc->prog_name, proc->state == CHILDPROC_DOWN ? "ed" : "ping", proc->child_pid);
 
-		if (proc->child_pid)
+		if (proc->state != CHILDPROC_DOWN)
+		{
 			childproc_kill(proc, true);
+			childproc_setstate(proc, CHILDPROC_DOWN);
+		}
 	}
 	else
 	{
 		time_t current_ts = time(NULL);
+
+		childproc_setstate(proc, CHILDPROC_CRASHED);
 
 		proc->restart_count++;
 		if (proc->respawn_period && current_ts - proc->respawn_last > proc->respawn_period)
@@ -279,6 +307,7 @@ supervisor_ipc_kill(int manager_fd, const nvlist_t *nvl, struct supervisor *sup)
 	ipc_obj_prepare(obj, "kill", 0, true);
 
 	childproc_kill(&sup->proc, true);
+	childproc_setstate(&sup->proc, CHILDPROC_DOWN);
 
 	nvlist_add_bool(obj, "success", true);
 
@@ -414,6 +443,9 @@ sighdl_chld(struct supervisor *sup)
 
 	if (!should_restart)
 	{
+		childproc_setstate(&sup->proc, CHILDPROC_STOPPING);
+		childproc_monitor(&sup->proc);
+
 		sup->exiting = true;
 		return true;
 	}
@@ -430,6 +462,7 @@ static bool
 sighdl_term(struct supervisor *sup)
 {
 	sup->exiting = true;
+	childproc_setstate(&sup->proc, CHILDPROC_DOWN);
 	childproc_kill(&sup->proc, true);
 	return true;
 }
@@ -460,6 +493,9 @@ supervisor_run(struct supervisor *sup)
 			[0] = {.fd = sup->signal_fd, .events = POLLIN},
 			[1] = {.fd = sup->manager_fd, .events = POLLIN}
 		};
+
+		if (sup->proc.state != CHILDPROC_UP || sup->proc.state != CHILDPROC_READY)
+			childproc_setstate(&sup->proc, CHILDPROC_UP);
 
 		if (poll(pfds, sup->watch_fds, !pending_restart ? -1 : (sup->proc.respawn_delay * 1000)) < 0)
 			abort();
@@ -560,7 +596,6 @@ main(int argc, char *argv[])
 	int ret;
 	struct supervisor sup = {};
 
-	sup.proc.parent = &sup;
 	sup.exiting = false;
 	sup.manager_fd = -1;
 	sup.watch_fds = 1;
