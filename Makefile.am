@@ -4,7 +4,9 @@ lib_LTLIBRARIES = libsvc.la
 LIBS += $(LIBNV_LIBS)
 CPPFLAGS = -Isrc $(LIBNV_CFLAGS)
 libsvc_la_SOURCES = 			\
+	src/libsvc/childproc.c		\
 	src/libsvc/ipc.c		\
+	src/libsvc/signal.c		\
 	src/libsvc/uidgid.c
 
 
