@@ -87,6 +87,8 @@ struct supervisor {
 	int manager_fd;
 	int signal_fd;
 	int watch_fds;
+
+	mode_t umask;
 };
 
 
@@ -396,6 +398,8 @@ supervisor_prepare(struct supervisor *sup)
 	sigaddset(&sigs, SIGQUIT);
 
 	sup->signal_fd = signalfd(-1, &sigs, SFD_CLOEXEC);
+
+	umask(sup->umask);
 }
 
 
@@ -505,6 +509,7 @@ usage(void)
 	printf("    --respawn-max=NUMBER          give up respawning after NUMBER times\n");
 	printf("    --manager-fd=NUMBER           perform manager-supervisor IPC on the given\n");
 	printf("                                  descriptor number\n");
+	printf("    --umask=UMASK                 set supervisor umask\n");
 
 	exit(EXIT_SUCCESS);
 }
@@ -523,6 +528,7 @@ const struct option longopts[] = {
 	{"stderr",		1, NULL, '2'},
 	{"uid",			1, NULL, 'u'},
 	{"gid",			1, NULL, 'g'},
+	{"umask",		1, NULL, 'k'},
 	{"help",		0, NULL, 'h'},
 	{"manager-fd",		1, NULL, 128},
 	{NULL,			0, NULL, 0  },
@@ -558,6 +564,7 @@ main(int argc, char *argv[])
 	sup.exiting = false;
 	sup.manager_fd = -1;
 	sup.watch_fds = 1;
+	sup.umask = 022;
 
 	sup.proc.child_uid = -1;
 	sup.proc.child_gid = -1;
@@ -616,6 +623,10 @@ main(int argc, char *argv[])
 					return EXIT_FAILURE;
 				}
 
+				break;
+
+			case 'k':
+				parse_mode(&sup.umask, optarg);
 				break;
 
 			case 128:
