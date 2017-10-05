@@ -66,3 +66,23 @@ gid_resolve(const char *groupname)
 
 	return -1;
 }
+
+
+int
+parse_mode(mode_t *mode, const char *text)
+{
+	char *p;
+	unsigned long l;
+
+	if ((*text - '0') < 8)
+	{
+		l = strtoul(text, &p, 8);
+		if (*p || l > 07777U)
+			return -1;
+
+		*mode = (mode_t) l;
+		return 0;
+	}
+
+	return -1;
+}
