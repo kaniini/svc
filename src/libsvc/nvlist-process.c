@@ -17,7 +17,7 @@ nvlist_process_table_cmp(const char *key, const void *tentry)
 void
 nvlist_process(const nvlist_t *nvl, const nvlist_process_table_t table[], size_t table_size, void *opaque)
 {
-	nvpair_t *nvp;
+	const nvpair_t *nvp;
 	const char *key;
 	const nvlist_process_table_t *tentry;
 
