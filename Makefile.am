@@ -4,6 +4,7 @@ lib_LTLIBRARIES = libsvc.la
 LIBS += $(LIBNV_LIBS)
 CPPFLAGS = -Isrc $(LIBNV_CFLAGS)
 libsvc_la_SOURCES = 			\
+	src/libsvc/argv.c		\
 	src/libsvc/childproc.c		\
 	src/libsvc/inifile.c		\
 	src/libsvc/ipc.c		\
