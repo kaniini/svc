@@ -7,6 +7,7 @@ libsvc_la_SOURCES = 			\
 	src/libsvc/childproc.c		\
 	src/libsvc/inifile.c		\
 	src/libsvc/ipc.c		\
+	src/libsvc/nvlist-process.c	\
 	src/libsvc/signal.c		\
 	src/libsvc/uidgid.c
 
