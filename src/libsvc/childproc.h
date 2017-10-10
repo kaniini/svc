@@ -49,8 +49,8 @@ struct childproc {
 
 	pid_t child_pid;
 
-	uid_t child_uid;
-	gid_t child_gid;
+	int child_uid;
+	int child_gid;
 
 	int stdin_fd;
 	int stdout_fd;

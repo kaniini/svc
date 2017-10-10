@@ -66,6 +66,8 @@ supervisor_ipc_kill(int manager_fd, const nvlist_t *nvl, struct supervisor *sup)
 {
 	nvlist_t *obj;
 
+	(void) nvl;
+
 	obj = nvlist_create(0);
 	ipc_obj_prepare(obj, "kill", 0, true);
 
@@ -86,6 +88,8 @@ static void
 supervisor_ipc_restart(int manager_fd, const nvlist_t *nvl, struct supervisor *sup)
 {
 	nvlist_t *obj;
+
+	(void) nvl;
 
 	obj = nvlist_create(0);
 	ipc_obj_prepare(obj, "restart", 0, true);
@@ -110,6 +114,8 @@ static void
 supervisor_ipc_status(int manager_fd, const nvlist_t *nvl, struct supervisor *sup)
 {
 	nvlist_t *obj;
+
+	(void) nvl;
 
 	obj = nvlist_create(0);
 	ipc_obj_prepare(obj, "status", 0, true);
@@ -270,7 +276,7 @@ supervisor_run(struct supervisor *sup)
 		{
 			struct signalfd_siginfo si;
 
-			if (read(sup->signal_fd, &si, sizeof si) < sizeof si)
+			if (read(sup->signal_fd, &si, sizeof si) < (ssize_t) sizeof(si))
 				abort();
 
 			if (si.ssi_signo != SIGCHLD)

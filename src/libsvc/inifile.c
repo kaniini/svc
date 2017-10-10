@@ -25,7 +25,7 @@ inifile_parse(const char *path)
 {
 	FILE *f;
 	nvlist_t *out, *section = NULL;
-	char buffer[4096], *tmp, *section_name;
+	char buffer[4096], *tmp, *section_name = NULL;
 
 	f = fopen(path, "rb");
 	if (f == NULL)

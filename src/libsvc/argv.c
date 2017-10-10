@@ -204,4 +204,6 @@ argv_split(argv_t *argv, const char *src)
 
 	free(vec[0]);
 	free(vec);
+
+	return true;
 }
