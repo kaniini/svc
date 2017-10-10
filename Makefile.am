@@ -1,7 +1,7 @@
 lib_LTLIBRARIES = libsvc.la
 
 
-CFLAGS += -Wall -Wextra
+CFLAGS += -std=gnu99 -Wall -Wextra
 LIBS += $(LIBNV_LIBS)
 CPPFLAGS = -Isrc $(LIBNV_CFLAGS)
 libsvc_la_SOURCES = 			\
